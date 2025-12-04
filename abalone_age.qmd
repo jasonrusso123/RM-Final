@@ -1,0 +1,35 @@
+---
+title: "Abalone Age Prediction"
+format: html
+authors: Isabella Coddington, JB Russo, Diyang Xie
+---
+
+```{r}
+library(leaps)
+library(tidyr)
+library(dplyr)
+library(MASS)
+library(rstudioapi)
+library(car)
+library(here)
+library(glmnet)
+```
+
+
+```{r}
+script_dir <- dirname(getActiveDocumentContext()$path)
+setwd(script_dir)
+df <- read.table(
+  here("abalone", "abalone.data"),
+  header = FALSE,
+  sep = ",",
+  stringsAsFactors = FALSE
+)
+
+colnames(df) <- c(
+  "Sex", "Length", "Diameter", "Height",
+  "WholeWeight", "ShuckedWeight", "VisceraWeight", "ShellWeight",
+  "Rings"
+)
+```
+
