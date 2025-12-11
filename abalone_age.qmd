@@ -1,8 +1,17 @@
 ---
-title: "Abalone Age Prediction"
+title: "Abalone Snails Penalized Regression"
 format: html
 authors: Isabella Coddington, JB Russo, Diyang Xie
 ---
+
+Methodology overview:
+1. eda, confirm multicollinearity / address potential data issues
+2. baseline OLS model & stepwise AIC
+3. since heteroskecasticity is a problem, use weighted least squares for inference
+3. for prediction, use penalized regression (try ridge, lasso, elastic net --> elastic net is best)
+6. Nonparametric methods (LOESS, splines)
+
+
 
 ```{r}
 library(leaps)
@@ -15,21 +24,345 @@ library(here)
 library(glmnet)
 ```
 
+Read in data
+```{r}
+df <- read.table("/Users/izzycoddington/Downloads/abalone/abalone.data", sep = ",",
+                 col.names = c("Sex", "Length", "Diameter", "Height",
+                               "Whole_weight", "Shucked_weight", "Viscera_weight", 
+                               "Shell_weight", "Rings"))
+
+df$Sex <- factor(df$Sex, levels = c("M", "F", "I"))
+```
+
+Starting with preliminary EDA:
+- basic summaries of our variables
+```{r}
+summary(df)
+skimr::skim(df)
+```
+n = 4177, p = 9 (1 factor & 8 numeric variables)
+No missing variables but maybe data entry errors? (how is there a height of 0)
+
+Dist of rings:
+Most abalone are ~8-11 rings (9.5-12.5 yrs), with a few much older
+
+Histogram of rings
+```{r}
+library(ggplot2)
+
+ggplot(df, aes(x = Rings)) +
+  geom_histogram(bins = 30, color = "white") +
+  theme_minimal() +
+  labs(title = "Distribution of Abalone Rings",
+       x = "Number of Rings",
+       y = "Count")
+```
+heavy right tail, maybe transformation is necessary? also, this is count data so maybe NB GLM
+
+
+Boxplot by Sex
+```{r}
+ggplot(df, aes(x = Sex, y = Rings, fill = Sex)) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(title = "Rings by Sex",
+       x = "Sex",
+       y = "Number of Rings")
+```
+Number of rings looks super similar for male and female - infant is centered lower with smaller range. 
+
+Correlation structure
+```{r}
+library(GGally)
+
+set.seed(123)
+ggpairs(df %>%
+          dplyr::slice_sample(n = 400),
+        columns = c("Length", "Diameter", "Height",
+                    "Whole_weight", "Shucked_weight",
+                    "Viscera_weight", "Shell_weight", "Rings"))
+```
+Lots of multicollinearity.
+
+Baseline Model.
+```{r}
+full_mod <- lm(Rings ~ Sex + Length + Diameter + Height +
+                 Whole_weight + Shucked_weight +
+                 Viscera_weight + Shell_weight,
+               data = df)
+
+summary(full_mod)
+library(car)
+vif(full_mod)
+```
+VIF is big for the weight vars and the measurement vars. Likely only one of each will be necessary in final model?
+
+
+Doing stepwise AIC to build off of initial model. 
+```{r}
+library(MASS)
+step_mod <- stepAIC(full_mod, direction = "both", trace = FALSE)
+summary(step_mod)
+vif(step_mod)
+```
+Diagnostics for baseline. 
+```{r}
+par(mfrow = c(2, 2))
+plot(step_mod)
+par(mfrow = c(1, 1))
+```
 
 ```{r}
-script_dir <- dirname(getActiveDocumentContext()$path)
-setwd(script_dir)
-df <- read.table(
-  here("abalone", "abalone.data"),
-  header = FALSE,
-  sep = ",",
-  stringsAsFactors = FALSE
+library(lmtest)
+bptest(full_mod)
+```
+Nonconstant variance of residuals is likely based off of diagnostic plots and bp test.
+The model we got from stepwise AIC also has a bunch of measurement variables that are competing with opposite signs and are basically the same thing. We simply so not need these in my professional opinion as an abalone biologist. 
+
+Use Best Subsets / BIC to select a simple, non-redundant predictor set
+```{r}
+library(leaps)
+
+best <- regsubsets(
+  Rings ~ Sex + Length + Diameter + Height +
+          Whole_weight + Shucked_weight +
+          Viscera_weight + Shell_weight,
+  data = df,
+  nvmax = 8
 )
 
-colnames(df) <- c(
-  "Sex", "Length", "Diameter", "Height",
-  "WholeWeight", "ShuckedWeight", "VisceraWeight", "ShellWeight",
-  "Rings"
+summary(best)
+```
+```{r}
+best_sum <- summary(best)
+which.min(best_sum$bic)
+best_sum <- summary(best)
+best_sum$which[which.min(best_sum$bic), ]
+```
+```{r}
+bic_mod_final <- lm(Rings ~ Sex + Diameter + Height + Whole_weight + Shucked_weight + Viscera_weight + Shell_weight, data=df)
+summary(bic_mod_final)
+```
+
+
+Weighted least squares  
+```{r}
+e  <- resid(bic_mod_final)
+f  <- fitted(bic_mod_final)
+
+# model the variance as a function of the fitted values
+var_fit <- lm(e^2 ~ f)
+
+sigma2_hat <- pmax(fitted(var_fit), 1e-6)  # avoid zeros
+w <- 1 / sigma2_hat                        # weights ∝ 1/Var(e_i)
+
+wls_mod <- lm(formula(bic_mod_final), data = df, weights = w)
+
+summary(wls_mod)
+```
+```{r}
+par(mfrow = c(2,2))
+plot(wls_mod)
+par(mfrow = c(1,1))
+```
+
+```{r}
+bptest(wls_mod)
+```
+```{r}
+which(abs(rstandard(wls_mod)) > 4)
+outliers <- df[which(abs(rstandard(wls_mod)) > 4), ]
+```
+The heteroskedasticity is WORSE with WLS. Trying grouped WLS
+```{r}
+f <- fitted(bic_mod_final)
+e <- resid(bic_mod_final)
+df$bin <- cut(f, breaks = 10)
+var_bin <- tapply(e^2, df$bin, mean)
+df$w_bin <- 1 / var_bin[df$bin]
+wls_grouped <- lm(formula(bic_mod_final), data = df, weights = w_bin)
+summary(wls_grouped)
+```
+```{r}
+plot(wls_grouped, which = 1:3)
+bptest(wls_grouped)
+```
+Grouped WLS is better for heteroskedasticity
+
+```{r}
+library(MASS)
+pois_mod <- glm(Rings ~ predictors..., family = poisson, data = df)
+dispersiontest(pois_mod)
+```
+
+
+
+Penalized regression
+```{r}
+library(glmnet)
+
+# Create predictor matrix (numeric)
+x <- model.matrix(Rings ~ Sex + Length + Diameter + Height +
+                    Whole_weight + Shucked_weight +
+                    Viscera_weight + Shell_weight,
+                  data = df)[, -1]   # drop intercept column
+
+# Response vector
+y <- df$Rings
+```
+
+Ridge (alpha = 0)
+```{r}
+ridge_mod <- glmnet(x, y, alpha = 0)   # ridge
+print(ridge_mod)
+```
+Lasso
+```{r}
+lasso_mod <- glmnet(x, y, alpha = 1)   # lasso
+print(lasso_mod)
+```
+
+```{r}
+enet_mod <- glmnet(x, y, alpha = 0.5)
+print(enet_mod)
+```
+```{r}
+set.seed(123)
+
+cv_ridge <- cv.glmnet(x, y, alpha = 0)
+cv_lasso <- cv.glmnet(x, y, alpha = 1)
+cv_enet  <- cv.glmnet(x, y, alpha = 0.5)
+
+plot(cv_ridge)
+plot(cv_lasso)
+plot(cv_enet)
+```
+Across models, ridge and elastic net produced nearly identical cross-validated MSE curves with flat, stable minima, indicating strong predictive performance and robustness to the choice of λ. In contrast, the lasso curve decreased much more slowly and only reached its minimum for very small values of λ, suggesting that aggressive shrinkage degrades accuracy. Elastic net therefore provides the best compromise, offering the predictive stability of ridge while still performing variable selection.
+
+```{r}
+coef(cv_ridge, s = "lambda.min")
+coef(cv_lasso, s = "lambda.min")
+coef(cv_enet, s = "lambda.min")
+```
+Ridge regression retains all predictors but shrinks them substantially, producing stable estimates in the presence of severe collinearity. Lasso performs variable selection by removing Length from the model, suggesting that the information contained in Length is essentially redundant given Diameter and Height. Elastic Net provides a compromise between the two: Length is nearly removed, but all remaining coefficients are more stable than in lasso alone. Across all penalized models, Diameter, Height, Shell_weight, and Whole_weight emerge as the strongest positive predictors of Rings, while internal weight measures receive negative coefficients to counteract the extreme multicollinearity among weight variables.
+```{r}
+plot(enet_mod, xvar = "lambda")
+```
+
+predictive performance of enet
+```{r}
+set.seed(123)
+
+n <- nrow(df)
+train_idx <- sample(seq_len(n), size = 0.8*n)
+
+train <- df[train_idx, ]
+test  <- df[-train_idx, ]
+
+library(glmnet)
+
+# Set up matrices
+x_train <- model.matrix(Rings ~ ., data=train)[,-1]
+y_train <- train$Rings
+
+x_test  <- model.matrix(Rings ~ ., data=test)[,-1]
+y_test  <- test$Rings
+
+# Fit ENet
+cv_enet <- cv.glmnet(x_train, y_train, 
+                     alpha = 0.5,        # your ENet tuning choice
+                     family = "gaussian")
+
+# Predict
+pred <- predict(cv_enet, newx=x_test, s="lambda.min")
+
+# Compute RMSE and MAE
+rmse <- sqrt(mean((y_test - pred)^2))
+mae  <- mean(abs(y_test - pred))
+
+rmse
+mae
+
+ols <- lm(Rings ~ ., data=train)
+ols_pred <- predict(ols, newdata=test)
+
+rmse_ols <- sqrt(mean((y_test - ols_pred)^2))
+mae_ols  <- mean(abs(y_test - ols_pred))
+
+rmse_ols
+mae_ols
+```
+
+
+```{r}
+library(ggplot2)
+library(tidyr)
+
+# Combine into a single data frame for easier plotting
+df_pred <- data.frame(
+  Actual = y_test,
+  ElasticNet = as.numeric(pred),
+  OLS = as.numeric(ols_pred)
 )
+
+# Reshape into long format
+df_long <- pivot_longer(df_pred, cols = c("ElasticNet", "OLS"),
+                        names_to = "Model", values_to = "Predicted")
+
+# Plot Predicted vs Actual
+ggplot(df_long, aes(x = Actual, y = Predicted, color = Model)) +
+  geom_point(alpha = 0.35) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  labs(
+    title = "Predictive Performance: Elastic Net vs OLS",
+    x = "Actual Rings",
+    y = "Predicted Rings"
+  ) +
+  theme_minimal(base_size = 14) +
+  scale_color_manual(values = c("ElasticNet" = "red", "OLS" = "blue"))
+```
+Natural splines
+```{r}
+library(splines)
+
+ns_mod <- lm(Rings ~ Sex + ns(Diameter, df = 4) + ns(Height, df = 4) +
+                    ns(Whole_weight, df = 4), data = train)
+
+pred_ns <- predict(ns_mod, newdata = test)
+
+rmse_ns <- sqrt(mean((y_test - pred_ns)^2))
+mae_ns  <- mean(abs(y_test - pred_ns))
+rmse_ns
+mae_ns
+```
+
+```{r}
+library(glmnet)
+
+# Model matrices
+x_train <- model.matrix(Rings ~ ., data=train)[,-1]
+y_train <- train$Rings
+
+x_test  <- model.matrix(Rings ~ ., data=test)[,-1]
+y_test  <- test$Rings
+
+# Fit Poisson elastic net
+set.seed(123)
+cv_pois <- cv.glmnet(
+  x_train, y_train,
+  family = "poisson",
+  alpha = 0.5   # elastic net
+)
+
+# Predict on test set 
+# glmnet Poisson returns log link predictions by default
+pois_pred <- predict(cv_pois, newx = x_test, s = "lambda.min", type = "response")
+
+# Evaluate
+rmse_pois <- sqrt(mean((y_test - pois_pred)^2))
+mae_pois  <- mean(abs(y_test - pois_pred))
+
+rmse_pois
+mae_pois
 ```
 
