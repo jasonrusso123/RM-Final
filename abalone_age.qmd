@@ -153,8 +153,8 @@ f  <- fitted(bic_mod_final)
 # model the variance as a function of the fitted values
 var_fit <- lm(e^2 ~ f)
 
-sigma2_hat <- pmax(fitted(var_fit), 1e-6)  # avoid zeros
-w <- 1 / sigma2_hat                        # weights ∝ 1/Var(e_i)
+sigma2_hat <- pmax(fitted(var_fit), 1e-6)  
+w <- 1 / sigma2_hat                        
 
 wls_mod <- lm(formula(bic_mod_final), data = df, weights = w)
 
@@ -224,7 +224,7 @@ library(glmnet)
 x <- model.matrix(Rings ~ Sex + Length + Diameter + Height +
                     Whole_weight + Shucked_weight +
                     Viscera_weight + Shell_weight,
-                  data = df)[, -1]   # drop intercept column
+                  data = df)[, -1]   
 
 # Response vector
 y <- df$Rings
@@ -280,22 +280,18 @@ test  <- df[-train_idx, ]
 
 library(glmnet)
 
-# Set up matrices
 x_train <- model.matrix(Rings ~ ., data=train)[,-1]
 y_train <- train$Rings
 
 x_test  <- model.matrix(Rings ~ ., data=test)[,-1]
 y_test  <- test$Rings
 
-# Fit ENet
 cv_enet <- cv.glmnet(x_train, y_train, 
-                     alpha = 0.5,        # your ENet tuning choice
+                     alpha = 0.5,        
                      family = "gaussian")
 
-# Predict
 pred <- predict(cv_enet, newx=x_test, s="lambda.min")
 
-# Compute RMSE and MAE
 rmse <- sqrt(mean((y_test - pred)^2))
 mae  <- mean(abs(y_test - pred))
 
@@ -317,18 +313,15 @@ mae_ols
 library(ggplot2)
 library(tidyr)
 
-# Combine into a single data frame for easier plotting
 df_pred <- data.frame(
   Actual = y_test,
   ElasticNet = as.numeric(pred),
   OLS = as.numeric(ols_pred)
 )
 
-# Reshape into long format
 df_long <- pivot_longer(df_pred, cols = c("ElasticNet", "OLS"),
                         names_to = "Model", values_to = "Predicted")
 
-# Plot Predicted vs Actual
 ggplot(df_long, aes(x = Actual, y = Predicted, color = Model)) +
   geom_point(alpha = 0.35) +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
@@ -358,26 +351,22 @@ mae_ns
 ```{r}
 library(glmnet)
 
-# Model matrices
 x_train <- model.matrix(Rings ~ ., data=train)[,-1]
 y_train <- train$Rings
 
 x_test  <- model.matrix(Rings ~ ., data=test)[,-1]
 y_test  <- test$Rings
 
-# Fit Poisson elastic net
 set.seed(123)
 cv_pois <- cv.glmnet(
   x_train, y_train,
   family = "poisson",
-  alpha = 0.5   # elastic net
+  alpha = 0.5   
 )
 
-# Predict on test set 
-# glmnet Poisson returns log link predictions by default
+
 pois_pred <- predict(cv_pois, newx = x_test, s = "lambda.min", type = "response")
 
-# Evaluate
 rmse_pois <- sqrt(mean((y_test - pois_pred)^2))
 mae_pois  <- mean(abs(y_test - pois_pred))
 
@@ -416,7 +405,7 @@ eig$values
 ```
 
 ```{r}
-eig <- eigen(cov_mat)$values   # extract only the numeric eigenvalues
+eig <- eigen(cov_mat)$values 
 
 cumvar <- cumsum(eig) / sum(eig)
 cumvar
