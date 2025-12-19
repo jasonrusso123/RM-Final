@@ -419,3 +419,158 @@ plot(cumvar,
 
 abline(h = 0.95, lty = 2, col = "red")
 ```
+
+```{r}
+```{r}
+form <- Rings ~ Sex + Diameter + Height + Whole_weight +
+  Shucked_weight + Viscera_weight + Shell_weight
+
+ols_mod <- lm(form, data = df)
+
+# Studentized residuals + leverage + Cook's D
+df_diag <- df %>%
+  dplyr::mutate(
+    .id = dplyr::row_number(),
+    rstud = rstudent(ols_mod),
+    lev   = hatvalues(ols_mod),
+    cook  = cooks.distance(ols_mod)
+  )
+
+# Flag rules (common thresholds)
+n <- nrow(df)
+p <- length(coef(ols_mod)) - 1  # predictors (excluding intercept)
+
+df_diag <- df_diag %>%
+  dplyr::mutate(
+    flag_resid = abs(rstud) > 3,
+    flag_lev   = lev > (2 * (p + 1) / n),
+    flag_cook  = cook > (4 / n),
+    flag_any   = flag_resid | flag_lev | flag_cook
+  )
+
+outliers <- df_diag %>% dplyr::filter(flag_any)
+
+nrow(outliers)
+
+
+```
+```{r}
+df_diag$flag_any <- with(df_diag, (abs(rstud) > 3) | (lev > (2*(p+1)/n)) | (cook > (4/n)))
+
+summary_table <- df_diag %>%
+  dplyr::mutate(group = ifelse(flag_any, "Flagged", "Not flagged")) %>%
+  dplyr::group_by(group) %>%
+  dplyr::summarise(
+    n = dplyr::n(),
+    Rings_mean = mean(Rings, na.rm=TRUE),
+    Rings_sd   = sd(Rings, na.rm=TRUE),
+    Diameter_mean = mean(Diameter, na.rm=TRUE),
+    Height_mean   = mean(Height, na.rm=TRUE),
+    Whole_mean    = mean(Whole_weight, na.rm=TRUE),
+    Shell_mean    = mean(Shell_weight, na.rm=TRUE),
+    # ratio examples (often reveal measurement oddities)
+    shell_to_whole_mean = mean(Shell_weight / Whole_weight, na.rm=TRUE),
+    shucked_to_whole_mean = mean(Shucked_weight / Whole_weight, na.rm=TRUE)
+  )
+
+summary_table
+```
+```{r}
+outliers %>%
+  arrange(desc(cook)) %>%
+  select(.id, Rings, Sex, rstud, lev, cook,
+         Diameter, Height, Whole_weight, Shucked_weight, Viscera_weight, Shell_weight) %>%
+  head(15)
+```
+```{r}
+gwls_mod <- wls_grouped  # rename for clarity if you want
+
+gwls_diag <- df %>%
+  mutate(
+    .id  = row_number(),
+    rstud = rstudent(gwls_mod),
+    lev   = hatvalues(gwls_mod),
+    cook  = cooks.distance(gwls_mod)
+  )
+
+# Compare top influential under OLS vs grouped WLS
+top_gwls <- gwls_diag %>% arrange(desc(cook)) %>% select(.id, rstud, lev, cook) %>% head(15)
+top_ols  <- df_diag    %>% arrange(desc(cook)) %>% select(.id, rstud, lev, cook) %>% head(15)
+
+top_gwls
+top_ols
+```
+```{r}
+df[2052, ]
+```
+```{r}
+set.seed(123)
+idx_train <- sample(seq_len(nrow(df)), size = floor(0.8*nrow(df)))
+train <- df[idx_train, ]
+test  <- df[-idx_train, ]
+
+x_train <- model.matrix(form, data = train)[, -1]
+y_train <- train$Rings
+x_test  <- model.matrix(form, data = test)[, -1]
+y_test  <- test$Rings
+
+rmse <- function(y, yhat) sqrt(mean((y - yhat)^2))
+mae  <- function(y, yhat) mean(abs(y - yhat))
+
+# Fit ENet on full train
+cv_enet_full <- cv.glmnet(x_train, y_train, alpha = 0.5)
+pred_full <- as.numeric(predict(cv_enet_full, newx = x_test, s = "lambda.min"))
+c(RMSE = rmse(y_test, pred_full), MAE = mae(y_test, pred_full))
+
+# Use outlier IDs defined from OLS on FULL df (df_diag$flag_any)
+flag_ids <- df_diag %>% filter(flag_any) %>% pull(.id)
+
+train2 <- train %>% mutate(.id = as.integer(rownames(train))) # may not match; safer below
+
+flag_any <- df_diag$flag_any
+flag_train <- flag_any[idx_train]  # outlier flags restricted to training rows
+
+train_trim <- train[!flag_train, ]
+
+x_train_trim <- model.matrix(form, data = train_trim)[, -1]
+y_train_trim <- train_trim$Rings
+
+cv_enet_trim <- cv.glmnet(x_train_trim, y_train_trim, alpha = 0.5)
+
+pred_trim <- as.numeric(predict(cv_enet_trim, newx = x_test, s = "lambda.min"))
+
+c(RMSE = rmse(y_test, pred_trim), MAE = mae(y_test, pred_trim))
+
+b_full <- as.matrix(coef(cv_enet_full, s = "lambda.min"))
+b_trim <- as.matrix(coef(cv_enet_trim, s = "lambda.min"))
+
+coef_stability <- data.frame(
+  term = rownames(b_full),
+  full = as.numeric(b_full),
+  trimmed = as.numeric(b_trim),
+  diff = as.numeric(b_trim) - as.numeric(b_full)
+)
+
+coef_stability
+```
+
+
+```{r}
+df_diag %>%
+  mutate(
+    shell_gt_whole = Shell_weight > Whole_weight,
+    shucked_gt_whole = Shucked_weight > Whole_weight,
+    viscera_gt_whole = Viscera_weight > Whole_weight,
+    negative_any = Length <= 0 | Diameter <= 0 | Height <= 0 |
+                   Whole_weight <= 0 | Shucked_weight <= 0 |
+                   Viscera_weight <= 0 | Shell_weight <= 0
+  ) %>%
+  summarise(
+    shell_gt_whole = sum(shell_gt_whole),
+    shucked_gt_whole = sum(shucked_gt_whole),
+    viscera_gt_whole = sum(viscera_gt_whole),
+    negative_any = sum(negative_any)
+  )
+```
+```
+
