@@ -380,8 +380,7 @@ library(rpart)
 set.seed(123)
 tree_mod <- rpart(Rings ~ ., 
                   data = train,
-                  method = "anova",
-                  control = rpart.control(cp = 0.01))
+                  method = "anova")
 
 pred_tree <- predict(tree_mod, newdata = test)
 
