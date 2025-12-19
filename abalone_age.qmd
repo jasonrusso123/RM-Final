@@ -468,7 +468,6 @@ summary_table <- df_diag %>%
     Height_mean   = mean(Height, na.rm=TRUE),
     Whole_mean    = mean(Whole_weight, na.rm=TRUE),
     Shell_mean    = mean(Shell_weight, na.rm=TRUE),
-    # ratio examples (often reveal measurement oddities)
     shell_to_whole_mean = mean(Shell_weight / Whole_weight, na.rm=TRUE),
     shucked_to_whole_mean = mean(Shucked_weight / Whole_weight, na.rm=TRUE)
   )
