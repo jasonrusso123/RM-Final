@@ -483,7 +483,7 @@ outliers %>%
   head(15)
 ```
 ```{r}
-gwls_mod <- wls_grouped  # rename for clarity if you want
+gwls_mod <- wls_grouped 
 
 gwls_diag <- df %>%
   mutate(
