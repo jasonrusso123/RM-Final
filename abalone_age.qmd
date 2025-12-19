@@ -399,22 +399,7 @@ pred_tree <- predict(tree_mod, newdata = test)
 mse_tree <- mean((y_test - pred_tree)^2)
 rmse_tree <- sqrt(mse_tree)
 
-mse_ols <- mean((y_test - ols_pred)^2)
-mse_enet <- mean((y_test - pred)^2)
-mse_ns <- mean((y_test - pred_ns)^2)
-mse_pois <- mean((y_test - pois_pred)^2)
-
-results <- data.frame(
-  Model = c("OLS", "Elastic Net", "Natural Splines", "Poisson Elastic Net", "Decision Tree"),
-  MSE = c(mse_ols, mse_enet, mse_ns, mse_pois, mse_tree),
-  RMSE = c(rmse_ols, rmse, rmse_ns, rmse_pois, rmse_tree),
-  MAE = c(mae_ols, mae, mae_ns, mae_pois, NA)
-)
-
-results$MAE[5] <- mean(abs(y_test - pred_tree))
-
-print(results)
-
+rmse_tree
 
 ```
 
